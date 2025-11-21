@@ -167,22 +167,59 @@ def search_hotel_offers(
 ) -> str:
     """
     Retrieve hotel offers for a given city and date range.
-    Returns the API response body as a JSON string or an error.
+    
+    Uses Amadeus V3 logic:
+    1. Finds hotels in the city (Reference Data API).
+    2. Gets offers for the top 'max' hotels found (Shopping API).
+    
+    Returns:
+        JSON string of offers or error message.
     """
+    # Validation for V3 limits
+    if adults and not (1 <= adults <= 9):
+        return json.dumps({"error": "Adults must be between 1 and 9"})
+
     try:
         amadeus_client = _get_amadeus_client(ctx)
 
+        # Step 1: Find hotels in the city
+        ctx.info(f"Step 1: Searching for hotels in {cityCode}...")
+        try:
+            # Using the Reference Data API to get hotel IDs by city
+            hotels_response = amadeus_client.reference_data.locations.hotels.by_city.get(
+                cityCode=cityCode
+            )
+        except ResponseError as error:
+            # Handle 404 or other errors specifically for the city search
+            if error.response.status_code == 404:
+                return json.dumps({"error": f"No hotels found in city code: {cityCode}"})
+            raise error
+
+        if not hotels_response.data:
+             return json.dumps({"error": f"No hotels found in {cityCode}"})
+
+        # Step 2: Extract Hotel IDs
+        # We limit the list to 'max' to ensure the URL doesn't become too long
+        # and to control the search scope.
+        found_hotels = hotels_response.data
+        target_hotels = found_hotels[:max]
+        hotel_ids_list = [hotel.get("hotelId") for hotel in target_hotels if hotel.get("hotelId")]
+        
+        if not hotel_ids_list:
+            return json.dumps({"error": "Hotels found, but no valid IDs returned."})
+
+        hotel_ids_str = ",".join(hotel_ids_list)
+        ctx.info(f"Step 2: Fetching offers for {len(hotel_ids_list)} hotels: {hotel_ids_str}")
+
+        # Step 3: Search Offers for these specific IDs
         params = {
-            "cityCode": cityCode,
+            "hotelIds": hotel_ids_str,
             "checkInDate": checkInDate,
             "checkOutDate": checkOutDate,
             "adults": adults,
             "currency": currency,
-            "max": max,
         }
 
-        ctx.info(f"Hotel search params: {json.dumps(params)}")
-        # Using the hotel offers search endpoint
         response = amadeus_client.shopping.hotel_offers_search.get(**params)
         return json.dumps(response.body)
 
@@ -192,54 +229,6 @@ def search_hotel_offers(
         return json.dumps({"error": err_msg})
     except Exception as e:
         err_msg = f"Unexpected error in search_hotel_offers: {str(e)}"
-        ctx.info(err_msg)
-        return json.dumps({"error": err_msg})
-
-
-# -------------------------
-# Tool: search_car_hire_transfer_offers
-# -------------------------
-@mcp.tool()
-def search_car_hire_transfer_offers(
-    ctx: Context,
-    pickupLocation: str,
-    pickupDate: str,
-    returnDate: str,
-    driversAge: Optional[int] = 30,
-    currency: Optional[str] = "USD"
-) -> str:
-    """
-    Search for car hire/transfer offers.
-    Note: Amadeus car / transfer endpoints vary by SDK version; this function uses
-    the shopping/car_rental endpoints where available. Adjust per your SDK.
-    """
-    try:
-        amadeus_client = _get_amadeus_client(ctx)
-
-        params = {
-            "pickupLocation": pickupLocation,
-            "pickupDate": pickupDate,
-            "returnDate": returnDate,
-            "driversAge": driversAge,
-            "currency": currency,
-        }
-
-        ctx.info(f"Car hire search params: {json.dumps(params)}")
-        # Try a couple of plausible endpoints depending on SDK version:
-        try:
-            response = amadeus_client.shopping.car_rental_search.get(**params)
-        except Exception:
-            # Fallback to a transfers-like endpoint if present in your SDK
-            response = amadeus_client.shopping.transfer_offers.get(**params)
-
-        return json.dumps(response.body)
-
-    except ResponseError as error:
-        err_msg = f"Amadeus Car/Transfer API error: {str(error)}"
-        ctx.info(err_msg)
-        return json.dumps({"error": err_msg})
-    except Exception as e:
-        err_msg = f"Unexpected error in search_car_hire_transfer_offers: {str(e)}"
         ctx.info(err_msg)
         return json.dumps({"error": err_msg})
 
