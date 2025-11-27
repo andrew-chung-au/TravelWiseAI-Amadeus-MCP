@@ -20,29 +20,33 @@ class AppContext:
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """
-    Initialize the Amadeus client inside the FastMCP lifespan.
-    Strict mode: if environment variables are missing, warn and fail-fast.
+    Initialize the Amadeus client using standard env vars.
     """
-    api_key = os.environ.get("AMADEUS_API_KEY")
-    api_secret = os.environ.get("AMADEUS_API_SECRET")
+    client_id = os.getenv("AMADEUS_CLIENT_ID")
+    client_secret = os.getenv("AMADEUS_CLIENT_SECRET")
 
-    if not api_key or not api_secret:
-        # Emit a clear warning for debugging, then fail fast.
+    if not client_id or not client_secret:
         print(
-            "WARNING: AMADEUS_API_KEY or AMADEUS_API_SECRET is not set.\n"
+            "ERROR: AMADEUS_CLIENT_ID or AMADEUS_CLIENT_SECRET is not set.\n"
             "Amadeus client cannot be initialised. Server will not start.",
             file=sys.stderr,
         )
         raise ValueError(
-            "AMADEUS_API_KEY and AMADEUS_API_SECRET must be set as environment variables"
+            "AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET must be set as environment variables"
         )
 
-    amadeus_client = Client(client_id=api_key, client_secret=api_secret)
+    # Helpful for debugging that the MCP server actually sees the env
+    print(
+        f"SERVER using AMADEUS_CLIENT_ID: {client_id[:8]}...",
+        file=sys.stderr,
+    )
+
+    amadeus_client = Client(client_id=client_id, client_secret=client_secret)
 
     try:
         yield AppContext(amadeus_client=amadeus_client)
     finally:
-        # The Amadeus SDK does not require explicit shutdown in most cases.
+        # Amadeus SDK doesn't need explicit shutdown
         pass
 
 
@@ -52,7 +56,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 mcp = FastMCP(
     "TravelWise AI Amadeus Server",
     dependencies=["amadeus"],
-    lifespan=app_lifespan
+    lifespan=app_lifespan,
 )
 
 
@@ -62,11 +66,9 @@ mcp = FastMCP(
 def _get_amadeus_client(ctx: Context) -> Client:
     """
     Retrieve the Amadeus client instance from lifespan/context.
-    Raises RuntimeError if not available (shouldn't happen in strict mode).
     """
     client = ctx.request_context.lifespan_context.amadeus_client
     if client is None:
-        # Defensive: this should not occur because app_lifespan is strict.
         raise RuntimeError("Amadeus client is not initialised in lifespan context")
     return client
 
@@ -90,18 +92,19 @@ def get_flight_offers(
     nonStop: Optional[bool] = None,
     currencyCode: Optional[str] = None,
     maxPrice: Optional[int] = None,
-    max: int = 250
+    max: int = 250,
 ) -> str:
     """
     Search for flight offers using Amadeus API (full parameter set).
     Returns a JSON string containing the API response body or an error object.
     """
-    # Basic validation according to Amadeus limits
     if adults and not (1 <= adults <= 9):
         return json.dumps({"error": "Adults must be between 1 and 9"})
 
     if (children or 0) + adults > 9:
-        return json.dumps({"error": "Total number of seated travelers (adults + children) cannot exceed 9"})
+        return json.dumps({
+            "error": "Total number of seated travelers (adults + children) cannot exceed 9"
+        })
 
     if infants and adults and (infants > adults):
         return json.dumps({"error": "Number of infants cannot exceed number of adults"})
@@ -139,7 +142,6 @@ def get_flight_offers(
 
         ctx.info(f"Flight search params: {json.dumps(params)}")
         response = amadeus_client.shopping.flight_offers_search.get(**params)
-        # Return the raw response body (stringified JSON)
         return json.dumps(response.body)
 
     except ResponseError as error:
@@ -163,55 +165,40 @@ def get_hotel_offers(
     checkOutDate: str,
     adults: int = 2,
     max: int = 10,
-    currency: Optional[str] = "USD"
+    currency: Optional[str] = "USD",
 ) -> str:
     """
     Retrieve hotel offers for a given city and date range.
-    
-    Uses Amadeus V3 logic:
-    1. Finds hotels in the city (Reference Data API).
-    2. Gets offers for the top 'max' hotels found (Shopping API).
-    
-    Returns:
-        JSON string of offers or error message.
     """
-    # Validation for V3 limits
     if adults and not (1 <= adults <= 9):
         return json.dumps({"error": "Adults must be between 1 and 9"})
 
     try:
         amadeus_client = _get_amadeus_client(ctx)
 
-        # Step 1: Find hotels in the city
         ctx.info(f"Step 1: Searching for hotels in {cityCode}...")
         try:
-            # Using the Reference Data API to get hotel IDs by city
             hotels_response = amadeus_client.reference_data.locations.hotels.by_city.get(
                 cityCode=cityCode
             )
         except ResponseError as error:
-            # Handle 404 or other errors specifically for the city search
             if error.response.status_code == 404:
                 return json.dumps({"error": f"No hotels found in city code: {cityCode}"})
             raise error
 
         if not hotels_response.data:
-             return json.dumps({"error": f"No hotels found in {cityCode}"})
+            return json.dumps({"error": f"No hotels found in {cityCode}"})
 
-        # Step 2: Extract Hotel IDs
-        # We limit the list to 'max' to ensure the URL doesn't become too long
-        # and to control the search scope.
         found_hotels = hotels_response.data
         target_hotels = found_hotels[:max]
-        hotel_ids_list = [hotel.get("hotelId") for hotel in target_hotels if hotel.get("hotelId")]
-        
+        hotel_ids_list = [h.get("hotelId") for h in target_hotels if h.get("hotelId")]
+
         if not hotel_ids_list:
             return json.dumps({"error": "Hotels found, but no valid IDs returned."})
 
         hotel_ids_str = ",".join(hotel_ids_list)
         ctx.info(f"Step 2: Fetching offers for {len(hotel_ids_list)} hotels: {hotel_ids_str}")
 
-        # Step 3: Search Offers for these specific IDs
         params = {
             "hotelIds": hotel_ids_str,
             "checkInDate": checkInDate,
