@@ -72,10 +72,10 @@ def _get_amadeus_client(ctx: Context) -> Client:
 
 
 # -------------------------
-# Tool: search_flight_offers
+# Tool: get_flight_offers
 # -------------------------
 @mcp.tool()
-def search_flight_offers(
+def get_flight_offers(
     ctx: Context,
     originLocationCode: str,
     destinationLocationCode: str,
@@ -147,16 +147,16 @@ def search_flight_offers(
         ctx.info(err_msg)
         return json.dumps({"error": err_msg})
     except Exception as e:
-        err_msg = f"Unexpected error in search_flight_offers: {str(e)}"
+        err_msg = f"Unexpected error in get_flight_offers: {str(e)}"
         ctx.info(err_msg)
         return json.dumps({"error": err_msg})
 
 
 # -------------------------
-# Tool: search_hotel_offers
+# Tool: get_hotel_offers
 # -------------------------
 @mcp.tool()
-def search_hotel_offers(
+def get_hotel_offers(
     ctx: Context,
     cityCode: str,
     checkInDate: str,
@@ -228,20 +228,9 @@ def search_hotel_offers(
         ctx.info(err_msg)
         return json.dumps({"error": err_msg})
     except Exception as e:
-        err_msg = f"Unexpected error in search_hotel_offers: {str(e)}"
+        err_msg = f"Unexpected error in get_hotel_offers: {str(e)}"
         ctx.info(err_msg)
         return json.dumps({"error": err_msg})
-
-
-# -------------------------
-# Optional: a helpful prompt generator for flight searches
-# -------------------------
-@mcp.prompt()
-def flight_search_prompt(origin: str, destination: str, date: str) -> str:
-    return (
-        f"Please search for flights from {origin} to {destination} on {date}. "
-        "Return options sorted by price with airline, departure/arrival times, and layover info."
-    )
 
 
 # -------------------------
