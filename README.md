@@ -135,4 +135,4 @@ Retrieves hotel offers for a specific city. The server first looks up hotels in 
 MIT License
 
 Original implementation by donghyun-chae.  
-Modifications and Hotel Search implementation added by asena.
+Modifications and Hotel Search implementation added by Andrew Chung.
