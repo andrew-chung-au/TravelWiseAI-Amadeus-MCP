@@ -1,7 +1,7 @@
-# src/server.py
 import os
 import sys
 import json
+import asyncio
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -21,34 +21,37 @@ class AppContext:
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """
     Initialize the Amadeus client using standard env vars.
+    This runs once when the server starts.
     """
     client_id = os.getenv("AMADEUS_CLIENT_ID")
     client_secret = os.getenv("AMADEUS_CLIENT_SECRET")
 
     if not client_id or not client_secret:
-        print(
+        error_msg = (
             "ERROR: AMADEUS_CLIENT_ID or AMADEUS_CLIENT_SECRET is not set.\n"
-            "Amadeus client cannot be initialised. Server will not start.",
-            file=sys.stderr,
+            "Server cannot start without credentials."
         )
-        raise ValueError(
-            "AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET must be set as environment variables"
-        )
+        print(error_msg, file=sys.stderr)
+        raise ValueError("Missing Amadeus API Credentials")
 
-    # Helpful for debugging that the MCP server actually sees the env
-    print(
-        f"SERVER using AMADEUS_CLIENT_ID: {client_id[:8]}...",
-        file=sys.stderr,
-    )
-
-    amadeus_client = Client(client_id=client_id, client_secret=client_secret)
+    # Helpful debug log
+    print(f"✅ Amadeus Client Initializing with ID: {client_id[:4]}****", file=sys.stderr)
 
     try:
+        # Initialize the Amadeus Client
+        # We disable log_level by default to keep MCP communication clean, 
+        # unless you specifically want SDK debug logs.
+        amadeus_client = Client(
+            client_id=client_id, 
+            client_secret=client_secret,
+            log_level='silent' 
+        )
+        
         yield AppContext(amadeus_client=amadeus_client)
-    finally:
-        # Amadeus SDK doesn't need explicit shutdown
-        pass
-
+        
+    except Exception as e:
+        print(f"❌ Failed to initialize Amadeus Client: {e}", file=sys.stderr)
+        raise
 
 # -------------------------
 # FastMCP server instance
@@ -59,19 +62,20 @@ mcp = FastMCP(
     lifespan=app_lifespan,
 )
 
-
 # -------------------------
 # Helpers
 # -------------------------
 def _get_amadeus_client(ctx: Context) -> Client:
     """
-    Retrieve the Amadeus client instance from lifespan/context.
+    Helper to retrieve the Amadeus client from the global context.
     """
-    client = ctx.request_context.lifespan_context.amadeus_client
-    if client is None:
-        raise RuntimeError("Amadeus client is not initialised in lifespan context")
-    return client
-
+    try:
+        client = ctx.request_context.lifespan_context.amadeus_client
+        if client is None:
+            raise RuntimeError("Amadeus client is None")
+        return client
+    except AttributeError:
+        raise RuntimeError("Amadeus client not found in context. Server might have failed to start correctly.")
 
 # -------------------------
 # Tool: get_flight_offers
@@ -90,67 +94,65 @@ def get_flight_offers(
     includedAirlineCodes: Optional[str] = None,
     excludedAirlineCodes: Optional[str] = None,
     nonStop: Optional[bool] = None,
-    currencyCode: Optional[str] = None,
+    currencyCode: Optional[str] = "USD",
     maxPrice: Optional[int] = None,
-    max: int = 250,
+    max: int = 10,
 ) -> str:
     """
-    Search for flight offers using Amadeus API (full parameter set).
-    Returns a JSON string containing the API response body or an error object.
+    Search for flight offers using Amadeus API.
+    Returns a JSON string of available flights.
     """
-    if adults and not (1 <= adults <= 9):
+    # Validation
+    if not (1 <= adults <= 9):
         return json.dumps({"error": "Adults must be between 1 and 9"})
+    
+    total_travelers = adults + (children or 0)
+    if total_travelers > 9:
+        return json.dumps({"error": f"Total travelers ({total_travelers}) cannot exceed 9"})
 
-    if (children or 0) + adults > 9:
-        return json.dumps({
-            "error": "Total number of seated travelers (adults + children) cannot exceed 9"
-        })
-
-    if infants and adults and (infants > adults):
+    if infants and (infants > adults):
         return json.dumps({"error": "Number of infants cannot exceed number of adults"})
 
     try:
-        amadeus_client = _get_amadeus_client(ctx)
+        client = _get_amadeus_client(ctx)
 
+        # Build parameters dictionary dynamically to avoid sending None values
         params = {
             "originLocationCode": originLocationCode,
             "destinationLocationCode": destinationLocationCode,
             "departureDate": departureDate,
             "adults": adults,
+            "max": max,
+            "currencyCode": currencyCode
         }
 
-        if returnDate:
-            params["returnDate"] = returnDate
-        if children is not None:
-            params["children"] = children
-        if infants is not None:
-            params["infants"] = infants
-        if travelClass:
-            params["travelClass"] = travelClass
-        if includedAirlineCodes:
-            params["includedAirlineCodes"] = includedAirlineCodes
-        if excludedAirlineCodes:
-            params["excludedAirlineCodes"] = excludedAirlineCodes
-        if nonStop is not None:
-            params["nonStop"] = nonStop
-        if currencyCode:
-            params["currencyCode"] = currencyCode
-        if maxPrice is not None:
-            params["maxPrice"] = maxPrice
-        if max is not None:
-            params["max"] = max
+        if returnDate: params["returnDate"] = returnDate
+        if children: params["children"] = children
+        if infants: params["infants"] = infants
+        if travelClass: params["travelClass"] = travelClass
+        if includedAirlineCodes: params["includedAirlineCodes"] = includedAirlineCodes
+        if excludedAirlineCodes: params["excludedAirlineCodes"] = excludedAirlineCodes
+        if nonStop is not None: params["nonStop"] = str(nonStop).lower() # API expects "true"/"false" string sometimes, or boolean. SDK handles it, but good to be safe.
+        if maxPrice: params["maxPrice"] = maxPrice
 
-        ctx.info(f"Flight search params: {json.dumps(params)}")
-        response = amadeus_client.shopping.flight_offers_search.get(**params)
-        return json.dumps(response.body)
+        ctx.info(f"✈️ Searching flights: {originLocationCode} -> {destinationLocationCode} on {departureDate}")
+        
+        response = client.shopping.flight_offers_search.get(**params)
+        
+        # Check if response body is empty
+        if not response.data:
+            return json.dumps({"info": "No flights found matching criteria."})
+
+        return json.dumps(response.data)
 
     except ResponseError as error:
-        err_msg = f"Amadeus Flight API error: {str(error)}"
-        ctx.info(err_msg)
+        # Amadeus specific API errors
+        err_msg = f"Amadeus API Error [{error.response.status_code}]: {error.code} - {error.description}"
+        ctx.error(err_msg)
         return json.dumps({"error": err_msg})
     except Exception as e:
-        err_msg = f"Unexpected error in get_flight_offers: {str(e)}"
-        ctx.info(err_msg)
+        err_msg = f"Unexpected error: {str(e)}"
+        ctx.error(err_msg)
         return json.dumps({"error": err_msg})
 
 
@@ -169,17 +171,22 @@ def get_hotel_offers(
 ) -> str:
     """
     Retrieve hotel offers for a given city and date range.
+    Note: This is a 2-step process (Find Hotels in City -> Check their Availability).
     """
-    if adults and not (1 <= adults <= 9):
+    if not (1 <= adults <= 9):
         return json.dumps({"error": "Adults must be between 1 and 9"})
 
     try:
-        amadeus_client = _get_amadeus_client(ctx)
+        client = _get_amadeus_client(ctx)
 
-        ctx.info(f"Step 1: Searching for hotels in {cityCode}...")
+        # Step 1: Find hotels in the city
+        ctx.info(f"🏨 Step 1: Finding hotels in {cityCode}...")
         try:
-            hotels_response = amadeus_client.reference_data.locations.hotels.by_city.get(
-                cityCode=cityCode
+            # We fetch slightly more hotels than requested to increase odds of finding availability
+            hotels_response = client.reference_data.locations.hotels.by_city.get(
+                cityCode=cityCode,
+                radius=10,
+                radiusUnit='KM'
             )
         except ResponseError as error:
             if error.response.status_code == 404:
@@ -189,39 +196,46 @@ def get_hotel_offers(
         if not hotels_response.data:
             return json.dumps({"error": f"No hotels found in {cityCode}"})
 
-        found_hotels = hotels_response.data
-        target_hotels = found_hotels[:max]
-        hotel_ids_list = [h.get("hotelId") for h in target_hotels if h.get("hotelId")]
+        # Get list of Hotel IDs (limit to max to prevent URL too long errors)
+        found_hotels = hotels_response.data[:max]
+        hotel_ids = [h.get("hotelId") for h in found_hotels if h.get("hotelId")]
 
-        if not hotel_ids_list:
-            return json.dumps({"error": "Hotels found, but no valid IDs returned."})
+        if not hotel_ids:
+            return json.dumps({"error": "Hotels found but had no valid IDs."})
 
-        hotel_ids_str = ",".join(hotel_ids_list)
-        ctx.info(f"Step 2: Fetching offers for {len(hotel_ids_list)} hotels: {hotel_ids_str}")
+        # Step 2: Check availability for these specific hotels
+        ids_str = ",".join(hotel_ids)
+        ctx.info(f"🏨 Step 2: Checking availability for {len(hotel_ids)} hotels...")
 
         params = {
-            "hotelIds": hotel_ids_str,
+            "hotelIds": ids_str,
             "checkInDate": checkInDate,
             "checkOutDate": checkOutDate,
             "adults": adults,
             "currency": currency,
         }
 
-        response = amadeus_client.shopping.hotel_offers_search.get(**params)
-        return json.dumps(response.body)
+        response = client.shopping.hotel_offers_search.get(**params)
+        
+        if not response.data:
+             return json.dumps({"info": f"Hotels exist in {cityCode}, but none have offers for these dates/parameters."})
+
+        return json.dumps(response.data)
 
     except ResponseError as error:
         err_msg = f"Amadeus Hotel API error: {str(error)}"
-        ctx.info(err_msg)
+        ctx.error(err_msg)
         return json.dumps({"error": err_msg})
     except Exception as e:
-        err_msg = f"Unexpected error in get_hotel_offers: {str(e)}"
-        ctx.info(err_msg)
+        err_msg = f"Unexpected error: {str(e)}"
+        ctx.error(err_msg)
         return json.dumps({"error": err_msg})
 
 
 # -------------------------
-# Server entrypoint
+# Entrypoint
 # -------------------------
 if __name__ == "__main__":
+    # Default to Stdio (Standard Input/Output)
+    # This is what Claude Desktop uses.
     mcp.run()
