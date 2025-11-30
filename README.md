@@ -82,6 +82,36 @@ Register this server in your MCP client (e.g., Claude for Desktop). Edit `~/Libr
 
 ---
 
+<!-- ☁️ Remote / AWS Deployment (SSE Mode) -->
+<!-- If you are running this server on a remote machine (e.g., AWS EC2) and connecting via SSH Tunnel or HTTP, you must use the SSE (Server-Sent Events) entry point instead of the standard Stdio server.py. -->
+
+<!-- 1. Requirements -->
+<!-- Ensure uvicorn and starlette are installed: -->
+```bash
+uv add uvicorn starlette
+```
+
+<!-- 2. Run the SSE Server -->
+<!-- Run the run_sse.py script. This exposes the server on port 8500. -->
+```bash
+# Run on the remote server
+uv run src/run_sse.py
+```
+
+<!-- 3. Connect via SSH Tunnel -->
+<!-- If you are connecting from a local client to the remote AWS server: -->
+<!-- Establish Tunnel: -->
+```bash
+ssh -L 8500:localhost:8500 user@your-aws-ip
+```
+
+<!-- Connect Client: Point your MCP client or test script to: -->
+```text
+http://localhost:8500/sse
+```
+
+---
+
 ## 🛠️ Tools
 
 ### 1. `get_flight_offers`
