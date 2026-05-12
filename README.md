@@ -4,7 +4,7 @@
 
 **MCP-Amadeus is a community-developed [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol) server that integrates with the Amadeus Flight Offers Search & Hotel API.**
 
-Built for use with MCP-compatible clients (e.g., Claude Desktop), this project enables users to search for flight options and hotel accommodations using natural language.
+Built for use with MCP-compatible clients (e.g., Claude Desktop), this project enables users to search for flight options and hotel accommodations using natural language. It was created to support [Travelwise: A Hybrid-Cloud Multi-Agent Concierge](https://kaggle.com/competitions/agents-intensive-capstone-project/writeups/new-writeup-1763433677466).
 
 This project uses the official [amadeus-python SDK](https://github.com/amadeus4dev/amadeus-python).
 
@@ -157,6 +157,7 @@ Retrieves hotel offers for a specific city. The server first looks up hotels in 
 * [Model Context Protocol Python SDK](https://github.com/modelcontextprotocol)
 * [Amadeus Python SDK](https://github.com/amadeus4dev/amadeus-python)
 * [Amadeus API Documentation](https://developers.amadeus.com/)
+* [Travelwise: A Hybrid-Cloud Multi-Agent Concierge](https://kaggle.com/competitions/agents-intensive-capstone-project/writeups/new-writeup-1763433677466)
 
 ---
 
