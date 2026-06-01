@@ -4,11 +4,17 @@
 
 **MCP-Amadeus is a community-developed [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol) server that integrates with the Amadeus Flight Offers Search & Hotel API.**
 
-Built for use with MCP-compatible clients (e.g., Claude Desktop), this project enables users to search for flight options and hotel accommodations using natural language. It was created to support [Travelwise: A Hybrid-Cloud Multi-Agent Concierge](https://kaggle.com/competitions/agents-intensive-capstone-project/writeups/new-writeup-1763433677466).
+Compatible with any MCP client (e.g., Claude Desktop), it enables users to search for flight options and hotel accommodations using natural language. It was created to support [Travelwise: A Hybrid-Cloud Multi-Agent Concierge](https://kaggle.com/competitions/agents-intensive-capstone-project/writeups/new-writeup-1763433677466).
 
 This project uses the official [amadeus-python SDK](https://github.com/amadeus4dev/amadeus-python).
 
 > **Disclaimer:** This is an open-source project *not affiliated with or endorsed by Amadeus IT Group.* Amadeus® is a registered trademark of Amadeus IT Group.
+
+---
+
+> ⚠️ **SUNSET NOTICE (July 2026):** Amadeus has officially decommissioned their Self-Service API tier as of July 17, 2026. Consequently, live data fetching via this MCP server is no longer functional without an Enterprise Amadeus account. 
+>
+> **This repository is now maintained as an Architectural Reference.** The core Python application, Server-Sent Events (SSE) implementation, Graceful Degradation engine, and Terraform deployment pipeline remain fully valid demonstrations of enterprise software design and MCP tool orchestration.
 
 ---
 
@@ -19,8 +25,22 @@ Retrieve flight options between two locations for specified dates.
 > "Find me nonstop flights from JFK to LHR on June 15th for 1 adult."
 
 ### 🏨 Hotel Offers Search
-**[NEW]** Retrieve available hotel offers for a specific city.
+Retrieve available hotel offers for a specific city.
 > "Find hotels in Paris (PAR) for 2 adults checking in on July 10th and out on July 15th."
+
+### 🔄 Level C Mock Engine (Graceful Degradation)
+Fully testable without API credentials. The server automatically detects invalid or missing API keys and seamlessly falls back to a highly realistic, randomized Mock Engine that perfectly adheres to the Amadeus JSON schemas.
+
+---
+
+## 🏛️ Architecture & Design
+
+This application was engineered with a focus on enterprise patterns, system resilience, and clear separation of concerns.
+
+* **Dependency Injection (DI):** The application decouples the business logic (fetching travel data) from the network state. The `app_lifespan` context injects either the real Amadeus client or a `MockAmadeusClient` at boot. Tool functions remain perfectly clean and interface-agnostic.
+* **Graceful Degradation:** To prevent hard crashes caused by upstream rate limits or the API sunset, the application intercepts authentication failures and falls back to dynamic "Level C" polyfills, utilizing Python's `random` and `datetime` libraries to mimic live data variation.
+* **Transport Agnosticism:** The core Model Context Protocol (MCP) engine is isolated from its delivery mechanism. `server.py` contains the application logic and defaults to `stdio` (for local desktop clients), while `run_sse.py` wraps the application in a Starlette web server for Server-Sent Events (SSE) to serve remote agents.
+* **Reproducible Builds:** Dependency drift is eliminated by strictly utilizing `uv.lock` for package management across local development, Docker distribution, and AWS EC2 bootstrapping.
 
 ---
 
@@ -29,6 +49,7 @@ Retrieve flight options between two locations for specified dates.
 ### Installing via Smithery
 
 To install Amadeus MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@donghyun-chae/mcp-amadeus):
+
 ```bash
 npx -y @smithery/cli install @donghyun-chae/mcp-amadeus --client claude
 ```
@@ -36,79 +57,71 @@ npx -y @smithery/cli install @donghyun-chae/mcp-amadeus --client claude
 ### Manual Installation
 
 #### 1. Clone and Setup
+
 ```bash
-git clone https://github.com/donghyun-chae/mcp-amadeus.git
+git clone [https://github.com/donghyun-chae/mcp-amadeus.git](https://github.com/donghyun-chae/mcp-amadeus.git)
 cd mcp-amadeus
 uv sync
 ```
 
-#### 2. Get Your API Key
+#### 2. Environment Configuration
+Create your local environment file:
 
-1. Sign up on https://developers.amadeus.com/
-2. Create an app to obtain your `Client ID` and `Client Secret`.
-3. Create a `.env` file:
 ```bash
 cp .env.example .env
 ```
 
-Add your credentials to `.env`:
-```bash
-AMADEUS_CLIENT_ID=your_client_id
-AMADEUS_CLIENT_SECRET=your_client_secret
-```
+Edit `.env` to add your credentials.
+
+Evaluation Mode: If you do not have an Amadeus account, leave these variables as dummy placeholders (e.g., `mock_client_id`). The server will detect this and automatically activate the Mock Travel Engine.
 
 #### 3. Configure MCP Client
-
 Register this server in your MCP client (e.g., Claude for Desktop). Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-```json
+
+```JSON
 {
   "mcpServers": {
     "amadeus": {
       "command": "/path/to/your/uv",
       "args": [
         "--directory",
-        "/ABSOLUTE/PATH/TO/mcp-amadeus/src/",
+        "/ABSOLUTE/PATH/TO/mcp-amadeus/",
         "run",
         "--env-file",
         "/ABSOLUTE/PATH/TO/mcp-amadeus/.env",
-        "server.py"
+        "src/server.py"
       ]
     }
   }
 }
 ```
 
-**Note:** Ensure you provide the absolute path to your `uv` executable (e.g., `/Users/username/.local/bin/uv`) and the absolute path to your project folder.
-
 ---
 
-### ☁️ Remote / AWS Deployment (SSE Mode)
-If you are running this server on a remote machine (e.g., AWS EC2) and connecting via SSH Tunnel or HTTP, you must use the SSE (Server-Sent Events) entry point instead of the standard Stdio server.py.
+## ☁️ Infrastructure as Code: AWS Deployment (SSE Mode)
+For remote client connections (e.g., connecting a local Claude Desktop to a remote server or a dynamic cloud agent), this project includes a fully automated deployment via Terraform.
 
-1. Requirements
-Ensure uvicorn and starlette are installed:
+To demonstrate responsible cloud usage and avoid ongoing costs, the infrastructure is designed as a spin-up-on-demand model utilizing an EC2 instance. Credentials are handled securely via AWS Secrets Manager rather than static `.env` files, and access is strictly gated behind a Zero-Trust SSH tunnel.
+
+To deploy the server:
+1. Navigate to the `infrastructure/` directory.
+2. Copy the variables template: `cp terraform.tfvars.example terraform.tfvars` and add your deployment targets.
+3. Run the deployment:
+
 ```bash
-uv add uvicorn starlette
+terraform init
+terraform apply
 ```
 
-2. Run the SSE Server
-Run the run_sse.py script. This exposes the server on port 8500.
+Terraform will output the dynamic SSH tunnel connection string and the local SSE Endpoint URL. Point your MCP client to this URL.
+
+When testing is complete, tear down the infrastructure to ensure zero ongoing costs:
+
 ```bash
-# Run on the remote server
-uv run src/run_sse.py
+terraform destroy
 ```
 
-3. Connect via SSH Tunnel
-If you are connecting from a local client to the remote AWS server:
-Establish Tunnel:
-```bash
-ssh -L 8500:localhost:8500 user@your-aws-ip
-```
-
-Connect Client: Point your MCP client or test script to:
-```text
-http://localhost:8500/sse
-```
+For a detailed breakdown of the architectural decisions, IAM roles, and networking, see the **[Infrastructure README](infrastructure/README.md)**.
 
 ---
 
@@ -166,4 +179,4 @@ Retrieves hotel offers for a specific city. The server first looks up hotels in 
 MIT License
 
 Original implementation by donghyun-chae.  
-Modifications and Hotel Search implementation added by Andrew Chung.
+Modifications, Graceful Degradation architecture, and AWS Infrastructure implementation by Andrew Chung.

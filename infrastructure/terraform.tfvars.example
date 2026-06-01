@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# TravelWise AI — Deployment Variables
+# ---------------------------------------------------------------------------
+# Copy this file to 'terraform.tfvars' before running 'terraform apply'.
+# terraform.tfvars is git-ignored to protect secrets.
+# ---------------------------------------------------------------------------
+
+# --- Amadeus API ---
+# Get credentials at https://developers.amadeus.com
+# Leave as mock values to run the built-in simulated travel engine instead.
+amadeus_client_id     = "mock_client_id_123"
+amadeus_client_secret = "mock_client_secret_456"
+
+# --- AWS Key Pair ---
+# The EC2 key pair name in your target region (no .pem extension).
+# This key must exist before deploying — it cannot be changed after.
+key_name              = "your-key-pair-name"
+
+# ---------------------------------------------------------------------------
+# Optional Overrides
+# ---------------------------------------------------------------------------
+# aws_region   = "ap-southeast-2"
+# instance_type = "t3.micro"
+
+# Note: AWS Secrets Manager delays deletion. If redeploying quickly,
+# change project_name to avoid a name collision on recreated secrets.
+# project_name = "travelwise"
+
+# ---------------------------------------------------------------------------
+# SSH Access
+# ---------------------------------------------------------------------------
+# Controls which IPs can reach the EC2 instance via SSH.
+#
+# The default locks access to a single IP (true zero-trust). For cloud
+# notebook environments like Kaggle or Colab — which use dynamic IPs —
+# open to 0.0.0.0/0. Security then relies entirely on the RSA key.
+#
+# Static IP (recommended for local use):  "203.0.113.0/32"
+# Dynamic cloud agents (Kaggle/Colab):    "0.0.0.0/0"
+# ssh_allowed_cidr = "0.0.0.0/0"
